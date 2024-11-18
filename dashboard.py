@@ -16,7 +16,54 @@ st.title("User Metrics Dashboard")
 st.markdown("Analysis of user acquisition and purchase patterns")
 
 # Define all payment types
-ALL_PAYMENT_TYPES = ['InAppPurchase', 'AndroidPayment', 'StripePayment', 'CouponRedemptionCreditReseller']
+ALL_PAYMENT_TYPES = ['InAppPurchase', 'AndroidPayment', 'StripePayment', 'CouponRedemptionCreditReseller', 'FreePayment', 'CouponRedemptionReseller', 'CouponRedemptionResellerReply', 'CouponRedemptionPaid', 'CouponRedemption', 'SwfRedemption', 'BraintreePayment', 'PaypalPayment']
+DEFAULT_PAYMENT_TYPES = ['InAppPurchase', 'AndroidPayment', 'StripePayment']
+
+def aggregate_by_period(df, period='M'):
+    """
+    Aggregate data by specified time period (Monthly, Quarterly, or Yearly)
+    """
+    temp_df = df.copy()
+    
+    if not pd.api.types.is_datetime64_any_dtype(temp_df['Created at']):
+        temp_df['Created at'] = pd.to_datetime(temp_df['Created at'])
+    
+    if period == 'M':
+        temp_df['Period'] = temp_df['Created at'].dt.to_period('M')
+    elif period == 'Q':
+        temp_df['Period'] = temp_df['Created at'].dt.to_period('Q')
+    else:  # 'Y'
+        temp_df['Period'] = temp_df['Created at'].dt.to_period('Y')
+    
+    # Aggregate numeric columns
+    numeric_columns = temp_df.select_dtypes(include=[np.number]).columns
+    agg_df = temp_df.groupby('Period').agg({col: 'sum' for col in numeric_columns}).reset_index()
+    
+    # Convert period back to timestamp for plotting
+    agg_df['Created at'] = agg_df['Period'].apply(lambda x: x.to_timestamp())
+    
+    # Recalculate derived metrics if they exist
+    if 'Percentage Returning, Repeat' in df.columns:
+        agg_df['Percentage Returning, Repeat'] = (agg_df['Returning, Repeat'] / agg_df['Total Paying'] * 100).round(2)
+    if 'Cumulative All New Paying' in df.columns:
+        agg_df['Cumulative All New Paying'] = agg_df['All New Paying'].cumsum()
+    
+    return agg_df
+
+def format_date_axis(fig, period):
+    """Update date axis format based on selected period"""
+    if period == 'Y':
+        date_format = '%Y'
+    elif period == 'Q':
+        date_format = 'Q%q %Y'
+    else:  # 'M'
+        date_format = '%b %Y'
+    
+    fig.update_xaxes(
+        tickformat=date_format,
+        dtick='M3' if period == 'M' else 'M4' if period == 'Q' else 'M12'
+    )
+    return fig
 
 @st.cache_data
 def process_user_data_cached(payment_types_key):
@@ -230,29 +277,42 @@ def process_revenue_data(users, purchases, selected_payment_types):
 users, purchases = load_data()
 
 # Sidebar filters
-st.sidebar.header("Filters")
+st.sidebar.header("Data Filtering")
+
+st.sidebar.caption("Payment filtering only works for Payment and Revenue related metrics")
 
 # Add payment type filter
 selected_payment_types = st.sidebar.multiselect(
     "Select Payment Types",
     options=ALL_PAYMENT_TYPES,
-    default=ALL_PAYMENT_TYPES
+    default=DEFAULT_PAYMENT_TYPES
 )
+
+# Add time period selector to sidebar
+time_period = st.sidebar.selectbox(
+    "Select Date Granularity",
+    options=['Monthly', 'Quarterly', 'Yearly'],
+    index=0
+)
+
+# Convert selection to period code
+period_map = {
+    'Monthly': 'M',
+    'Quarterly': 'Q',
+    'Yearly': 'Y'
+}
+selected_period = period_map[time_period]
 
 if not selected_payment_types:
     st.warning("Please select at least one payment type.")
     st.stop()
 
 # Convert selected payment types to tuple for caching
-payment_types_key = tuple(sorted(selected_payment_types)) 
+payment_types_key = tuple(sorted(selected_payment_types))
 
 # Process data with selected payment types using cached functions
 df = process_user_data_cached(payment_types_key)
 df_revenue = process_revenue_data_cached(payment_types_key)
-
-# # Process data with selected payment types
-# df = process_user_data(users, purchases, selected_payment_types)
-# df_revenue = process_revenue_data(users, purchases, selected_payment_types)
 
 # Add date range filter
 date_range = st.sidebar.date_input(
@@ -267,6 +327,10 @@ mask = (df['Created at'].dt.date >= date_range[0]) & (df['Created at'].dt.date <
 mask2 = (df_revenue['Created at'].dt.date >= date_range[0]) & (df_revenue['Created at'].dt.date <= date_range[1])
 filtered_df = df[mask]
 filtered_df_revenue = df_revenue[mask2]
+
+# Aggregate data based on selected time period
+filtered_df = aggregate_by_period(filtered_df, selected_period)
+filtered_df_revenue = aggregate_by_period(filtered_df_revenue, selected_period)
 
 # Top level metrics
 col1, col2, col3, col4 = st.columns(4)
@@ -293,11 +357,12 @@ with tab1:
     fig1.add_trace(go.Bar(x=filtered_df['Created at'], y=filtered_df['New Paying Users'],
                          name='New Paying Users', marker_color='#28B463'))
     fig1.update_layout(
-        title='New Users vs New Paying Users Over Time',
+        title=f'{time_period} New Users vs New Paying Users',
         xaxis_title='Date',
         yaxis_title='Number of Users',
         barmode='group'
     )
+    fig1 = format_date_axis(fig1, selected_period)
     st.plotly_chart(fig1, use_container_width=True)
 
 with tab2:
@@ -315,30 +380,31 @@ with tab2:
     fig2.add_trace(go.Bar(
         x=filtered_df['Created at'],
         y=filtered_df['All New Paying'],
-        name='New Paying Users (Monthly)',
+        name='New Paying Users (Per Period)',
         marker_color='#AF7AC5',
         yaxis='y2'
     ))
     
     fig2.update_layout(
-        title='Payment Growth Trends',
+        title=f'{time_period} Payment Growth Trends',
         xaxis_title='Date',
         yaxis_title='Cumulative Users',
         yaxis2=dict(
-            title='Monthly New Paying Users',
+            title=f'New Paying Users per {time_period}',
             overlaying='y',
             side='right'
         ),
         legend=dict(x=0.02, y=1.15, orientation='h')
     )
-    
+    fig2 = format_date_axis(fig2, selected_period)
     st.plotly_chart(fig2, use_container_width=True)
     
     # User Payment Behavior Breakdown
     fig3 = px.bar(filtered_df, x='Created at',
                  y=['New Paying Users', 'Returning, First Purchase', 'Returning, Repeat'],
-                 title='User Payment Behavior Breakdown',
+                 title=f'{time_period} User Payment Behavior Breakdown',
                  labels={'value': 'Number of Users', 'variable': 'User Type'})
+    fig3 = format_date_axis(fig3, selected_period)
     st.plotly_chart(fig3, use_container_width=True)
     
     # Distribution of User Payment Types
@@ -351,8 +417,7 @@ with tab2:
         ]
     })
     fig4 = px.pie(avg_percentages, values='Percentage', names='Category',
-                 title='Distribution of User Payment Types')
-
+                 title=f'Distribution of User Payment Types ({time_period})')
     st.plotly_chart(fig4, use_container_width=True)
 
 with tab3:
@@ -371,14 +436,15 @@ with tab3:
     fig5.add_trace(go.Scatter(x=filtered_df['Created at'],
                              y=monthly_conversion,
                              mode='lines+markers',
-                             name='Monthly Conversion Rate',
+                             name=f'{time_period} Conversion Rate',
                              line=dict(width=2)))
     fig5.update_layout(
-        title='Monthly Conversion Rate Trend',
+        title=f'{time_period} Conversion Rate Trend',
         xaxis_title='Date',
         yaxis_title='Conversion Rate (%)',
         yaxis_range=[0, max(monthly_conversion) * 1.1]
     )
+    fig5 = format_date_axis(fig5, selected_period)
     st.plotly_chart(fig5, use_container_width=True)
 
 with tab4:
@@ -387,7 +453,7 @@ with tab4:
     fig_revenue.add_trace(go.Bar(
         x=filtered_df_revenue['Created at'],
         y=filtered_df_revenue['Total Revenue'],
-        name='Monthly Revenue'
+        name=f'{time_period} Revenue'
     ))
     fig_revenue.add_trace(go.Scatter(
         x=filtered_df_revenue['Created at'],
@@ -396,19 +462,21 @@ with tab4:
         yaxis='y2'
     ))
     fig_revenue.update_layout(
-        title='Revenue Growth',
-        yaxis_title='Monthly Revenue ($)',
+        title=f'{time_period} Revenue Growth',
+        yaxis_title='Revenue per Period ($)',
         yaxis2=dict(title='Cumulative Revenue ($)', overlaying='y', side='right'),
         legend=dict(x=0.02, y=1.15, orientation='h')
     )
+    fig_revenue = format_date_axis(fig_revenue, selected_period)
     st.plotly_chart(fig_revenue, use_container_width=True)
 
     # Revenue Breakdown
     fig_rev_breakdown = px.bar(filtered_df_revenue, x='Created at',
         y=['New Paying Users Revenue', 'Returning First Purchase Revenue', 'Returning Repeat Revenue'],
-        title='Revenue Breakdown by User Type',
+        title=f'{time_period} Revenue Breakdown by User Type',
         labels={'value': 'Revenue ($)', 'variable': 'Revenue Type'}
     )
+    fig_rev_breakdown = format_date_axis(fig_rev_breakdown, selected_period)
     st.plotly_chart(fig_rev_breakdown, use_container_width=True)
 
     # Revenue per User Trend
@@ -428,9 +496,10 @@ with tab4:
     fig_arpu.add_trace(go.Scatter(x=filtered_df['Created at'], y=monthly_arpu, name='ARPU'))
     fig_arpu.add_trace(go.Scatter(x=filtered_df['Created at'], y=monthly_arppu, name='ARPPU'))
     fig_arpu.update_layout(
-        title='Revenue per User Trends',
+        title=f'{time_period} Revenue per User Trends',
         yaxis_title='Revenue per User ($)'
     )
+    fig_arpu = format_date_axis(fig_arpu, selected_period)
     st.plotly_chart(fig_arpu, use_container_width=True)
 
 # Detailed metrics table
@@ -440,9 +509,23 @@ st.subheader("Detailed Metrics")
 display_df = filtered_df.copy()
 display_revenue_df = filtered_df_revenue.copy()
 
-# Format the 'Created at' column to show month and year and set it as index
-display_df['Created at'] = display_df['Created at'].dt.strftime('%B %Y')
-display_revenue_df['Created at'] = display_revenue_df['Created at'].dt.strftime('%B %Y')
+# Format the 'Created at' column based on the selected period
+if selected_period == 'Y':
+    date_format = '%Y'
+    display_df['Created at'] = display_df['Created at'].dt.strftime(date_format)
+    display_revenue_df['Created at'] = display_revenue_df['Created at'].dt.strftime(date_format)
+elif selected_period == 'Q':
+    date_format = 'Q%q %Y'
+    # Special handling for table display
+    display_df['Created at'] = filtered_df['Created at'].dt.quarter.map(lambda x: f'Q{x}') + ' ' + filtered_df['Created at'].dt.year.astype(str)
+    display_revenue_df['Created at'] = filtered_df_revenue['Created at'].dt.quarter.map(lambda x: f'Q{x}') + ' ' + filtered_df_revenue['Created at'].dt.year.astype(str)
+else:  # 'M'
+    date_format = '%B %Y'
+    display_df['Created at'] = display_df['Created at'].dt.strftime(date_format)
+    display_revenue_df['Created at'] = display_revenue_df['Created at'].dt.strftime(date_format)
+
+# display_df['Created at'] = display_df['Created at'].dt.strftime(date_format)
+# display_revenue_df['Created at'] = display_revenue_df['Created at'].dt.strftime(date_format)
 
 display_df = display_df.set_index('Created at')
 display_revenue_df = display_revenue_df.set_index('Created at')
@@ -457,7 +540,6 @@ display_df = display_df[['New Users', 'New Paying Users', 'Returning, First Purc
                         'All New Paying', 'Cumulative All New Paying', 'All Returning', 
                         'Returning, Repeat', 'Total Paying', 'Percentage Returning, Repeat',
                         'Total Revenue', 'ARPU', 'ARPPU']]
-
 
 # Display the dataframe with index (which will be frozen)
 st.dataframe(
@@ -475,5 +557,5 @@ st.dataframe(
         'ARPU': '${:,.2f}',
         'ARPPU': '${:,.2f}'
     }),
-    use_container_width=True
-)
+    use_container_width=True)
+                    
