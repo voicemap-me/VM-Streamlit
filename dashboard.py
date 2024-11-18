@@ -3,10 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
-import gspread
 import numpy as np
-from oauth2client.service_account import ServiceAccountCredentials
-from dateutil import parser
 
 # Set page config
 st.set_page_config(page_title="User Metrics Dashboard", layout="wide")
@@ -66,51 +63,51 @@ def format_date_axis(fig, period):
     return fig
 
 @st.cache_data
-def process_user_data_cached(payment_types_key):
-    """
-    Cached version of user data processing.
-    payment_types_key should be a tuple (immutable) of the selected payment types
-    """
+def process_filtered_data(
+    payment_types_key: tuple,
+    start_date: datetime,
+    end_date: datetime,
+    period: str
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     users, purchases = load_data()
-    return process_user_data(users, purchases, payment_types_key)
-
-@st.cache_data
-def process_revenue_data_cached(payment_types_key):
-    """
-    Cached version of revenue data processing.
-    payment_types_key should be a tuple (immutable) of the selected payment types
-    """
-    users, purchases = load_data()
-    return process_revenue_data(users, purchases, payment_types_key)
+    
+    # Convert date objects to timezone-naive pandas datetime
+    start_date = pd.to_datetime(start_date).tz_localize(None)
+    end_date = pd.to_datetime(end_date).tz_localize(None)
+    
+    # Apply filters early
+    users = users[(users['Created at'] >= start_date) & (users['Created at'] <= end_date)]
+    purchases = purchases[
+        (purchases['Created at [Route Purchase]'] >= start_date) & 
+        (purchases['Created at [Route Purchase]'] <= end_date) &
+        (purchases['Type [Payment]'].isin(payment_types_key))
+    ]
+    
+    # Process metrics
+    user_metrics = process_user_data(users, purchases, payment_types_key)
+    revenue_metrics = process_revenue_data(users, purchases, payment_types_key)
+    
+    # Apply period aggregation
+    if period != 'M':
+        user_metrics = aggregate_by_period(user_metrics, period)
+        revenue_metrics = aggregate_by_period(revenue_metrics, period)
+    
+    return user_metrics, revenue_metrics
 
 @st.cache_data
 def load_data():
     users = pd.read_csv("Users.csv")
     purchases = pd.read_csv("Purchase Data.csv")
-
-    def parse_and_standardize_date(date_val):
-        if isinstance(date_val, pd.Timestamp):
-            return date_val.tz_localize(None)
-        elif isinstance(date_val, str):
-            try:
-                return parser.parse(date_val).replace(tzinfo=None)
-            except:
-                return pd.NaT
-        else:
-            return date_val.replace(tzinfo=None)
-
-    # Apply the function to both DataFrames
-    users['Created at'] = users['Created at'].apply(parse_and_standardize_date)
-    purchases['Created at [Route Purchase]'] = purchases['Created at [Route Purchase]'].apply(parse_and_standardize_date)
-
-    # Drop 'None1' and 'None2' columns if they exist
-    users = users.drop(columns=['None1', 'None2'], errors='ignore')
-
-    # Ensure IDs are numeric
-    users['Id'] = pd.to_numeric(users['Id'], errors='coerce')
-    purchases['Id [User]'] = pd.to_numeric(purchases['Id [User]'], errors='coerce')
-    purchases['Price [Route Purchase]'] = pd.to_numeric(purchases['Price [Route Purchase]'], errors='coerce')
-
+    
+    # Convert dates with more robust parsing and ensure timezone-naive
+    users['Created at'] = pd.to_datetime(users['Created at'], format='mixed', utc=True).dt.tz_localize(None)
+    purchases['Created at [Route Purchase]'] = pd.to_datetime(purchases['Created at [Route Purchase]'], format='mixed', utc=True).dt.tz_localize(None)
+    
+    # Optimize datatypes
+    users['Id'] = pd.to_numeric(users['Id'], errors='coerce', downcast='integer')
+    purchases['Id [User]'] = pd.to_numeric(purchases['Id [User]'], errors='coerce', downcast='integer')
+    purchases['Price [Route Purchase]'] = pd.to_numeric(purchases['Price [Route Purchase]'], errors='coerce', downcast='float')
+    
     return users, purchases
 
 def get_user_id_range(users, month):
@@ -310,27 +307,30 @@ if not selected_payment_types:
 # Convert selected payment types to tuple for caching
 payment_types_key = tuple(sorted(selected_payment_types))
 
-# Process data with selected payment types using cached functions
-df = process_user_data_cached(payment_types_key)
-df_revenue = process_revenue_data_cached(payment_types_key)
+# After your period selection code and before process_filtered_data, replace with:
+
+# Get initial date range from raw data (we already have users loaded)
+min_date = users['Created at'].min().date()
+max_date = users['Created at'].max().date()
 
 # Add date range filter
 date_range = st.sidebar.date_input(
     "Select Date Range",
-    value=(df['Created at'].min(), df['Created at'].max()),
-    min_value=df['Created at'].min().date(),
-    max_value=df['Created at'].max().date()
+    value=(min_date, max_date),
+    min_value=min_date,
+    max_value=max_date
 )
 
-# Filter data based on date range
-mask = (df['Created at'].dt.date >= date_range[0]) & (df['Created at'].dt.date <= date_range[1])
-mask2 = (df_revenue['Created at'].dt.date >= date_range[0]) & (df_revenue['Created at'].dt.date <= date_range[1])
-filtered_df = df[mask]
-filtered_df_revenue = df_revenue[mask2]
+# Then process the filtered data
+df, df_revenue = process_filtered_data(
+    payment_types_key=tuple(sorted(selected_payment_types)),
+    start_date=date_range[0],
+    end_date=date_range[1],
+    period=selected_period
+)
 
-# Aggregate data based on selected time period
-filtered_df = aggregate_by_period(filtered_df, selected_period)
-filtered_df_revenue = aggregate_by_period(filtered_df_revenue, selected_period)
+filtered_df = df
+filtered_df_revenue = df_revenue
 
 # Top level metrics
 col1, col2, col3, col4 = st.columns(4)
