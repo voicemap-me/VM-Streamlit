@@ -242,13 +242,15 @@ def process_revenue_data(users, purchases, selected_payment_types):
         
         returning_revenue = month_revenue[~month_revenue['Id [User]'].isin(new_users_ids)]['Price [Route Purchase]'].sum()
         total_revenue = month_revenue['Price [Route Purchase]'].sum()
+        total_downloads = month_revenue['Price [Route Purchase]'].count()
         
         return pd.Series({
             'New Users Revenue': new_users_revenue,
             'New Paying Users Revenue': new_paying_revenue,
             'Returning First Purchase Revenue': returning_first_revenue,
             'All Returning Revenue': returning_revenue,
-            'Total Revenue': total_revenue
+            'Total Revenue': total_revenue,
+            'Total Downloads': total_downloads 
         })
     
     # Calculate metrics for each month
@@ -307,8 +309,6 @@ if not selected_payment_types:
 # Convert selected payment types to tuple for caching
 payment_types_key = tuple(sorted(selected_payment_types))
 
-# After your period selection code and before process_filtered_data, replace with:
-
 # Get initial date range from raw data (we already have users loaded)
 min_date = users['Created at'].min().date()
 max_date = users['Created at'].max().date()
@@ -333,7 +333,7 @@ filtered_df = df
 filtered_df_revenue = df_revenue
 
 # Top level metrics
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 with col1:
     st.metric("Total New Users", f"{filtered_df['New Users'].sum():,}")
 with col2:
@@ -344,10 +344,16 @@ with col3:
 with col4:
     repeat_rate = filtered_df['Percentage Returning, Repeat'].mean()
     st.metric("Avg Repeat Purchase Rate", f"{repeat_rate:.1f}%")
+with col5:
+    st.metric("Total Downloads", f"{int(filtered_df_revenue['Total Downloads'].sum()):,}")
+
 
 # Main visualizations
 st.subheader("User Growth Trends")
-tab1, tab2, tab3, tab4 = st.tabs(["User Acquisition", "Payment Metrics", "Conversion Analysis", "Revenue Metrics"])
+# tab1, tab2, tab3, tab4 = st.tabs(["User Acquisition", "Payment Metrics", "Conversion Analysis", "Revenue Metrics"])
+
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["User Acquisition", "Payment Metrics", "Conversion Analysis", "Revenue Metrics", "Unit Economics"])
+
 
 with tab1:
     # User acquisition trends
@@ -502,6 +508,119 @@ with tab4:
     fig_arpu = format_date_axis(fig_arpu, selected_period)
     st.plotly_chart(fig_arpu, use_container_width=True)
 
+
+with tab5:
+    # st.header("Unit Economics Analysis")
+    
+    # 1. Overview Section
+    st.subheader("1. Price Trends")
+    # Calculate key metrics first
+    filtered_df_revenue['Average Price'] = filtered_df_revenue['Total Revenue'] / filtered_df_revenue['Total Downloads']
+    first_price = filtered_df_revenue['Average Price'].iloc[0]
+    last_price = filtered_df_revenue['Average Price'].iloc[-1]
+    price_change = ((last_price - first_price) / first_price * 100)
+    
+    st.markdown(f"""
+    **Current Status:**
+    - Starting Price: ${first_price:.2f}
+    - Current Price: ${last_price:.2f}
+    - Total Price Change: {price_change:+.1f}%
+    """)
+    
+    # Price trend chart
+    fig_price = go.Figure()
+    fig_price.add_trace(go.Scatter(
+        x=filtered_df_revenue['Created at'],
+        y=filtered_df_revenue['Average Price'],
+        name='Average Price per Download',
+        line=dict(color='#2E86C1', width=2)
+    ))
+    fig_price.update_layout(
+        title='Average Price per Download Over Time',
+        yaxis_title='Price ($)',
+        showlegend=True
+    )
+    fig_price = format_date_axis(fig_price, selected_period)
+    st.plotly_chart(fig_price, use_container_width=True)
+
+    # 2. Growth Metrics Section
+    # st.subheader("2. Growth Analysis")
+    # col1, col2 = st.columns(2)
+    
+    # with col1:
+    #     # CAGR calculations
+    #     first_downloads = filtered_df_revenue['Total Downloads'].iloc[0]
+    #     last_downloads = filtered_df_revenue['Total Downloads'].iloc[-1]
+    #     n_periods = len(filtered_df_revenue) - 1
+        
+    #     if n_periods > 0 and first_downloads > 0:
+    #         try:
+    #             cagr_downloads = (((last_downloads / first_downloads) ** (1/n_periods)) - 1) * 100
+    #             future_downloads = last_downloads * (1 + (cagr_downloads/100)) ** 5
+                
+    #             st.metric("Downloads CAGR", f"{cagr_downloads:.1f}%")
+    #             st.metric("5Y Projection", f"{int(future_downloads):,}",
+    #                      f"{(future_downloads/last_downloads):.1f}x current")
+                
+    #             st.markdown("""
+    #             **What this means:**
+    #             - CAGR = Compound Annual Growth Rate
+    #             - Shows average yearly growth rate
+    #             - Projection assumes same growth continues
+    #             """)
+    #         except:
+    #             st.warning("Unable to calculate growth rates")
+    
+    # with col2:
+    #     st.markdown("""
+    #     **Growth Formulas:**
+    #     ```
+    #     CAGR = (Final/Initial)^(1/periods) - 1
+        
+    #     5Y Projection = Current * (1 + CAGR)^5
+    #     ```
+    #     """)
+    
+    # 3. Detailed Metrics Table
+    st.subheader("2. Unit Metrics")
+    st.markdown("""
+    **Key Metrics Explained:**
+    - **Downloads:** Number of purchases per period
+    - **Revenue:** Total money received
+    - **Avg Price:** Revenue ÷ Downloads
+    - **Growth:** Percentage change from previous period
+    """)
+
+    # Format and display metrics table
+    if selected_period == 'Y':
+        period_col = filtered_df_revenue['Created at'].dt.strftime('%Y')
+    elif selected_period == 'Q':
+        period_col = filtered_df_revenue['Created at'].dt.quarter.map(lambda x: f'Q{x}') + ' ' + filtered_df_revenue['Created at'].dt.year.astype(str)
+    else:
+        period_col = filtered_df_revenue['Created at'].dt.strftime('%B %Y')
+
+    unit_metrics = pd.DataFrame({
+        'Period': period_col,
+        'Downloads': filtered_df_revenue['Total Downloads'],
+        'Revenue': filtered_df_revenue['Total Revenue'],
+        'Avg Price': filtered_df_revenue['Average Price'],
+        'Downloads Growth': filtered_df_revenue['Total Downloads'].pct_change() * 100,
+        'Revenue Growth': filtered_df_revenue['Total Revenue'].pct_change() * 100,
+        'Price Growth': filtered_df_revenue['Average Price'].pct_change() * 100
+    }).set_index('Period')
+    
+    st.dataframe(
+        unit_metrics.style.format({
+            'Downloads': '{:,.0f}',
+            'Revenue': '${:,.2f}',
+            'Avg Price': '${:,.2f}',
+            'Downloads Growth': '{:+.2f}%',
+            'Revenue Growth': '{:+.2f}%',
+            'Price Growth': '{:+.2f}%'
+        }),
+        use_container_width=True
+    )
+
 # Detailed metrics table
 st.subheader("Detailed Metrics")
 
@@ -532,6 +651,7 @@ display_revenue_df = display_revenue_df.set_index('Created at')
 
 # Add revenue columns to display_df
 display_df['Total Revenue'] = display_revenue_df['Total Revenue']
+display_df['Total Downloads'] = display_revenue_df['Total Downloads']
 display_df['ARPU'] = display_revenue_df['Total Revenue'] / display_df['New Users']
 display_df['ARPPU'] = display_revenue_df['Total Revenue'] / display_df['Total Paying']
 
@@ -539,7 +659,7 @@ display_df['ARPPU'] = display_revenue_df['Total Revenue'] / display_df['Total Pa
 display_df = display_df[['New Users', 'New Paying Users', 'Returning, First Purchase', 
                         'All New Paying', 'Cumulative All New Paying', 'All Returning', 
                         'Returning, Repeat', 'Total Paying', 'Percentage Returning, Repeat',
-                        'Total Revenue', 'ARPU', 'ARPPU']]
+                        'Total Revenue', 'Total Downloads', 'ARPU', 'ARPPU']]
 
 # Display the dataframe with index (which will be frozen)
 st.dataframe(
@@ -554,6 +674,7 @@ st.dataframe(
         'Total Paying': '{:,.0f}',
         'Percentage Returning, Repeat': '{:.1f}%',
         'Total Revenue': '${:,.2f}',
+        'Total Downloads': '{:,.0f}',
         'ARPU': '${:,.2f}',
         'ARPPU': '${:,.2f}'
     }),
