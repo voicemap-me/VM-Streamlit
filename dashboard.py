@@ -58,7 +58,7 @@ def format_date_axis(fig, period):
     
     fig.update_xaxes(
         tickformat=date_format,
-        dtick='M3' if period == 'M' else 'M4' if period == 'Q' else 'M12'
+        dtick='M2' if period == 'M' else 'M3' if period == 'Q' else 'M12'
     )
     return fig
 
