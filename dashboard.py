@@ -4,8 +4,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import numpy as np
-from prophet import Prophet
-from prophet.plot import plot_components
+# from prophet import Prophet
+# from prophet.plot import plot_components
 import matplotlib.pyplot as plt
 
 # Set page config
