@@ -4,16 +4,16 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import numpy as np
-# from prophet import Prophet
-# from prophet.plot import plot_components
+from prophet import Prophet
+from prophet.plot import plot_components
 import matplotlib.pyplot as plt
 
 # Set page config
 st.set_page_config(page_title="VM-Streamlit", layout="wide")
 
-# tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["User Acquisition", "Payment Metrics", "Conversion Analysis", "Revenue Metrics", "Unit Economics", "Forecasting"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["User Acquisition", "Payment Metrics", "Conversion Analysis", "Revenue Metrics", "Unit Economics", "Forecasting"])
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["User Acquisition", "Payment Metrics", "Conversion Analysis", "Revenue Metrics", "Unit Economics"])
+# tab1, tab2, tab3, tab4, tab5 = st.tabs(["User Acquisition", "Payment Metrics", "Conversion Analysis", "Revenue Metrics", "Unit Economics"])
 
 
 # Define all payment types
@@ -63,10 +63,57 @@ def create_prophet_forecast(data, column_name, periods=12):
     
     m.fit(df_prophet)
     
-    # Create future dataframe
-    future = m.make_future_dataframe(periods=periods, freq=selected_period)
+    # Get the last date from actual data
+    last_date = df_prophet['ds'].max()
+    
+    # Create future dataframe starting after the last actual date
+    if selected_period == 'D':
+        future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=periods, freq='D')
+    elif selected_period == 'M':
+        future_dates = pd.date_range(start=last_date + pd.offsets.MonthBegin(1), periods=periods, freq='M')
+    elif selected_period == 'Q':
+        future_dates = pd.date_range(start=last_date + pd.offsets.QuarterBegin(1), periods=periods, freq='Q')
+    else:  # 'Y'
+        future_dates = pd.date_range(start=last_date + pd.offsets.YearBegin(1), periods=periods, freq='Y')
+    
+    future = pd.DataFrame({'ds': future_dates})
     
     # Make forecast
+    forecast = m.predict(future)
+    
+    # Combine with historical data for plotting
+    historical = pd.DataFrame({
+        'ds': df_prophet['ds'],
+        'yhat': df_prophet['y'],
+        'yhat_lower': df_prophet['y'],
+        'yhat_upper': df_prophet['y']
+    })
+    
+    forecast = pd.concat([historical, forecast])
+    
+    return forecast, m
+
+def create_components_forecast(data, column_name):
+    """
+    Create a forecast with all seasonality components for visualization
+    """
+    df_prophet = pd.DataFrame({
+        'ds': data['Created at'],
+        'y': data[column_name]
+    })
+    
+    # Configure Prophet with all seasonality components
+    m = Prophet(
+        yearly_seasonality=True,
+        weekly_seasonality=True,
+        daily_seasonality=True,
+        seasonality_mode='multiplicative'
+    )
+    
+    m.fit(df_prophet)
+    
+    # Create future dataframe for components
+    future = m.make_future_dataframe(periods=0, freq='D')  # No future periods needed for components
     forecast = m.predict(future)
     
     return forecast, m
@@ -1166,223 +1213,210 @@ with tab5:
         use_container_width=True
     )
 
-# Add this in your with tab6: section
-# with tab6:
-#     st.markdown("""
-#     ## 📈 Forecasting Analysis
+# Forecasting Tab
+with tab6:
+    st.markdown("""
+    ## 📈 Forecasting Analysis
     
-#     This tab provides forecasts for key metrics using Facebook's Prophet model. The forecasts take into account:
-#     - Historical trends
-#     - Yearly seasonality
-#     - Growth patterns
+    This tab provides forecasts for key metrics using Facebook's Prophet model. The forecasts take into account:
+    - Important Note: This model works best when filtering 2020 onwards and selecting monthly granularity
+    - Historical trends
+    - Yearly seasonality
+    - Growth patterns
     
-#     Note: Forecasts are estimates and should be used as directional guidance rather than exact predictions.
-#     """)
+    Note: Forecasts are estimates and should be used as directional guidance rather than exact predictions.
+    """)
     
-#     # Forecast period selector
-#     forecast_periods = st.slider("Number of periods to forecast", 
-#                                min_value=1, 
-#                                max_value=24, 
-#                                value=12,
-#                                help="Select how many periods ahead you want to forecast")
+    # Forecast period selector
+    forecast_periods = st.slider("Number of periods to forecast", 
+                               min_value=1, 
+                               max_value=24, 
+                               value=12,
+                               help="Select how many periods ahead you want to forecast")
     
-#     col1, col2 = st.columns(2)
+    # Revenue Forecast
+    st.markdown("### Revenue Forecast")
+    # Create revenue forecast
+    revenue_forecast, revenue_model = create_prophet_forecast(filtered_df_revenue, 'Total Revenue', forecast_periods)
     
-#     with col1:
-#         st.markdown("### Revenue Forecast")
-#         # Create revenue forecast
-#         revenue_forecast, revenue_model = create_prophet_forecast(filtered_df_revenue, 'Total Revenue', forecast_periods)
-        
-#         # Plot revenue forecast
-#         fig_revenue_forecast = go.Figure()
-        
-#         # Add actual values
-#         fig_revenue_forecast.add_trace(go.Scatter(
-#             x=filtered_df_revenue['Created at'],
-#             y=filtered_df_revenue['Total Revenue'],
-#             name='Actual Revenue',
-#             line=dict(color='blue')
-#         ))
-        
-#         # Add forecasted values
-#         fig_revenue_forecast.add_trace(go.Scatter(
-#             x=revenue_forecast['ds'],
-#             y=revenue_forecast['yhat'],
-#             name='Forecast',
-#             line=dict(color='red', dash='dash')
-#         ))
-        
-#         # Add confidence interval
-#         fig_revenue_forecast.add_trace(go.Scatter(
-#             x=revenue_forecast['ds'].tolist() + revenue_forecast['ds'].tolist()[::-1],
-#             y=revenue_forecast['yhat_upper'].tolist() + revenue_forecast['yhat_lower'].tolist()[::-1],
-#             fill='toself',
-#             fillcolor='rgba(255,0,0,0.1)',
-#             line=dict(color='rgba(255,0,0,0)'),
-#             name='Confidence Interval'
-#         ))
-        
-#         fig_revenue_forecast.update_layout(
-#             title='Revenue Forecast',
-#             xaxis_title='Date',
-#             yaxis_title='Revenue ($)',
-#             hovermode='x unified'
-#         )
-#         fig_revenue_forecast = format_date_axis(fig_revenue_forecast, selected_period)
-#         st.plotly_chart(fig_revenue_forecast, use_container_width=True)
-        
-#         # Display forecast metrics
-#         last_actual = filtered_df_revenue['Total Revenue'].iloc[-1]
-#         last_forecast = revenue_forecast['yhat'].iloc[-1]
-#         growth = ((last_forecast - last_actual) / last_actual) * 100
-        
-#         # st.metric(
-#         #     "Forecasted Growth",
-#         #     f"{growth:.1f}%",
-#         #     delta=f"${last_forecast - last_actual:,.2f}"
-#         # )
+    # Plot revenue forecast
+    fig_revenue_forecast = go.Figure()
     
-#     with col2:
-#         st.markdown("### New Users Forecast")
-#         # Create users forecast
-#         users_forecast, users_model = create_prophet_forecast(filtered_df, 'New Users', forecast_periods)
-        
-#         # Plot users forecast
-#         fig_users_forecast = go.Figure()
-        
-#         # Add actual values
-#         fig_users_forecast.add_trace(go.Scatter(
-#             x=filtered_df['Created at'],
-#             y=filtered_df['New Users'],
-#             name='Actual Users',
-#             line=dict(color='green')
-#         ))
-        
-#         # Add forecasted values
-#         fig_users_forecast.add_trace(go.Scatter(
-#             x=users_forecast['ds'],
-#             y=users_forecast['yhat'],
-#             name='Forecast',
-#             line=dict(color='red', dash='dash')
-#         ))
-        
-#         # Add confidence interval
-#         fig_users_forecast.add_trace(go.Scatter(
-#             x=users_forecast['ds'].tolist() + users_forecast['ds'].tolist()[::-1],
-#             y=users_forecast['yhat_upper'].tolist() + users_forecast['yhat_lower'].tolist()[::-1],
-#             fill='toself',
-#             fillcolor='rgba(255,0,0,0.1)',
-#             line=dict(color='rgba(255,0,0,0)'),
-#             name='Confidence Interval'
-#         ))
-        
-#         fig_users_forecast.update_layout(
-#             title='New Users Forecast',
-#             xaxis_title='Date',
-#             yaxis_title='Number of Users',
-#             hovermode='x unified'
-#         )
-#         fig_users_forecast = format_date_axis(fig_users_forecast, selected_period)
-#         st.plotly_chart(fig_users_forecast, use_container_width=True)
-        
-#         # Display forecast metrics
-#         last_actual = filtered_df['New Users'].iloc[-1]
-#         last_forecast = users_forecast['yhat'].iloc[-1]
-#         growth = ((last_forecast - last_actual) / last_actual) * 100
-        
-#         # st.metric(
-#         #     "Forecasted Growth",
-#         #     f"{growth:.1f}%",
-#         #     delta=f"{int(last_forecast - last_actual):,}"
-#         # )
+    # Add actual values
+    fig_revenue_forecast.add_trace(go.Scatter(
+        x=filtered_df_revenue['Created at'],
+        y=filtered_df_revenue['Total Revenue'],
+        name='Actual Revenue',
+        line=dict(color='blue', width=2)
+    ))
     
-#     # Add forecast components visualization
-#     st.markdown("### 📊 Forecast Components Analysis")
-#     st.markdown("""
-#     Understanding what drives the forecasts:
-#     - **Trend**: The long-term direction
-#     - **Yearly**: Seasonal patterns that repeat annually
-#     - **Weekly**: Patterns that repeat weekly (if applicable)
-#     """)
+    # Add forecasted values
+    fig_revenue_forecast.add_trace(go.Scatter(
+        x=revenue_forecast['ds'],
+        y=revenue_forecast['yhat'],
+        name='Forecast',
+        line=dict(color='red', dash='dash', width=2)
+    ))
     
-#     col3, col4 = st.columns(2)
+    # Add confidence interval
+    fig_revenue_forecast.add_trace(go.Scatter(
+        x=revenue_forecast['ds'].tolist() + revenue_forecast['ds'].tolist()[::-1],
+        y=revenue_forecast['yhat_upper'].tolist() + revenue_forecast['yhat_lower'].tolist()[::-1],
+        fill='toself',
+        fillcolor='rgba(255,0,0,0.1)',
+        line=dict(color='rgba(255,0,0,0)'),
+        name='Confidence Interval'
+    ))
     
-#     with col3:
-#         st.markdown("#### Revenue Components")
-#         fig_revenue_components = plot_components(revenue_model, revenue_forecast)
-#         st.pyplot(fig_revenue_components)
-#         plt.close()
+    fig_revenue_forecast.update_layout(
+        title='Revenue Forecast',
+        xaxis_title='Date',
+        yaxis_title='Revenue ($)',
+        hovermode='x unified',
+        height=500,  # Increased height
+        margin=dict(t=50, b=50, l=50, r=50)
+    )
+    fig_revenue_forecast = format_date_axis(fig_revenue_forecast, selected_period)
+    st.plotly_chart(fig_revenue_forecast, use_container_width=True)
     
-#     with col4:
-#         st.markdown("#### Users Components")
-#         fig_users_components = plot_components(users_model, users_forecast)
-#         st.pyplot(fig_users_components)
-#         plt.close()
+    # New Users Forecast
+    st.markdown("### New Users Forecast")
+    # Create users forecast
+    users_forecast, users_model = create_prophet_forecast(filtered_df, 'New Users', forecast_periods)
+    
+    # Plot users forecast
+    fig_users_forecast = go.Figure()
+    
+    # Add actual values
+    fig_users_forecast.add_trace(go.Scatter(
+        x=filtered_df['Created at'],
+        y=filtered_df['New Users'],
+        name='Actual Users',
+        line=dict(color='green', width=2)
+    ))
+    
+    # Add forecasted values
+    fig_users_forecast.add_trace(go.Scatter(
+        x=users_forecast['ds'],
+        y=users_forecast['yhat'],
+        name='Forecast',
+        line=dict(color='red', dash='dash', width=2)
+    ))
+    
+    # Add confidence interval
+    fig_users_forecast.add_trace(go.Scatter(
+        x=users_forecast['ds'].tolist() + users_forecast['ds'].tolist()[::-1],
+        y=users_forecast['yhat_upper'].tolist() + users_forecast['yhat_lower'].tolist()[::-1],
+        fill='toself',
+        fillcolor='rgba(255,0,0,0.1)',
+        line=dict(color='rgba(255,0,0,0)'),
+        name='Confidence Interval'
+    ))
+    
+    fig_users_forecast.update_layout(
+        title='New Users Forecast',
+        xaxis_title='Date',
+        yaxis_title='Number of Users',
+        hovermode='x unified',
+        height=500,  # Increased height
+        margin=dict(t=50, b=50, l=50, r=50)
+    )
+    fig_users_forecast = format_date_axis(fig_users_forecast, selected_period)
+    st.plotly_chart(fig_users_forecast, use_container_width=True)
+    
+    # Add forecast components visualization
+    st.markdown("### 📊 Forecast Components Analysis")
+    st.markdown("""
+    Understanding what drives our metrics across different time periods:
+    - **Trend**: The overall direction of growth
+    - **Yearly Seasonality**: Annual patterns and cycles
+    - **Monthly Seasonality**: Monthly variations
+    - **Weekly Seasonality**: Weekly patterns
+    - **Daily Seasonality**: Daily fluctuations
+    """)
+    
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        st.markdown("#### Revenue Components")
+        # Create components forecast for revenue
+        revenue_comp_forecast, revenue_comp_model = create_components_forecast(filtered_df_revenue, 'Total Revenue')
+        fig_revenue_components = plot_components(revenue_comp_model, revenue_comp_forecast)
+        st.pyplot(fig_revenue_components)
+        plt.close()
+    
+    with col4:
+        st.markdown("#### Users Components")
+        # Create components forecast for users
+        users_comp_forecast, users_comp_model = create_components_forecast(filtered_df, 'New Users')
+        fig_users_components = plot_components(users_comp_model, users_comp_forecast)
+        st.pyplot(fig_users_components)
+        plt.close()
 
     
-#     # Create forecasts for additional metrics
-#     conversion_df = pd.DataFrame({
-#         'Created at': filtered_df['Created at'],
-#         'Conversion Rate': (filtered_df['New Paying Users'] / filtered_df['New Users'] * 100)
-#     }).dropna()
+    # Create forecasts for additional metrics
+    conversion_df = pd.DataFrame({
+        'Created at': filtered_df['Created at'],
+        'Conversion Rate': (filtered_df['New Paying Users'] / filtered_df['New Users'] * 100)
+    }).dropna()
 
-#     repeat_rate_df = pd.DataFrame({
-#         'Created at': filtered_df['Created at'],
-#         'Repeat Rate': (filtered_df['Returning, Repeat'].cumsum() / filtered_df['All New Paying'].cumsum() * 100)
-#     }).dropna()
+    repeat_rate_df = pd.DataFrame({
+        'Created at': filtered_df['Created at'],
+        'Repeat Rate': (filtered_df['Returning, Repeat'].cumsum() / filtered_df['All New Paying'].cumsum() * 100)
+    }).dropna()
 
-#     # Generate forecasts for each metric
-#     users_forecast, _ = create_prophet_forecast(filtered_df, 'New Users', forecast_periods)
-#     conv_forecast, _ = create_prophet_forecast(conversion_df, 'Conversion Rate', forecast_periods)
-#     repeat_forecast, _ = create_prophet_forecast(repeat_rate_df, 'Repeat Rate', forecast_periods)
+    # Generate forecasts for each metric
+    users_forecast, _ = create_prophet_forecast(filtered_df, 'New Users', forecast_periods)
+    conv_forecast, _ = create_prophet_forecast(conversion_df, 'Conversion Rate', forecast_periods)
+    repeat_forecast, _ = create_prophet_forecast(repeat_rate_df, 'Repeat Rate', forecast_periods)
 
-#     # Create combined forecast table
-#     forecast_table = pd.DataFrame({
-#         'Period': users_forecast['ds'],
-#         'Forecasted Users': users_forecast['yhat'].round(0),
-#         'Users Lower Bound': users_forecast['yhat_lower'].round(0),
-#         'Users Upper Bound': users_forecast['yhat_upper'].round(0),
-#         'Forecasted Conversion Rate (%)': conv_forecast['yhat'].round(2),
-#         'Conversion Rate Lower Bound (%)': conv_forecast['yhat_lower'].round(2),
-#         'Conversion Rate Upper Bound (%)': conv_forecast['yhat_upper'].round(2),
-#         'Forecasted Repeat Rate (%)': repeat_forecast['yhat'].round(2),
-#         'Repeat Rate Lower Bound (%)': repeat_forecast['yhat_lower'].round(2),
-#         'Repeat Rate Upper Bound (%)': repeat_forecast['yhat_upper'].round(2)
-#     })
+    # Create combined forecast table
+    forecast_table = pd.DataFrame({
+        'Period': users_forecast['ds'],
+        'Forecasted Users': users_forecast['yhat'].round(0),
+        'Users Lower Bound': users_forecast['yhat_lower'].round(0),
+        'Users Upper Bound': users_forecast['yhat_upper'].round(0),
+        'Forecasted Conversion Rate (%)': conv_forecast['yhat'].round(2),
+        'Conversion Rate Lower Bound (%)': conv_forecast['yhat_lower'].round(2),
+        'Conversion Rate Upper Bound (%)': conv_forecast['yhat_upper'].round(2),
+        'Forecasted Repeat Rate (%)': repeat_forecast['yhat'].round(2),
+        'Repeat Rate Lower Bound (%)': repeat_forecast['yhat_lower'].round(2),
+        'Repeat Rate Upper Bound (%)': repeat_forecast['yhat_upper'].round(2)
+    })
 
-#     # Format the period column based on selected granularity
-#     if selected_period == 'Y':
-#         forecast_table['Period'] = forecast_table['Period'].dt.strftime('%Y')
-#     elif selected_period == 'Q':
-#         forecast_table['Period'] = forecast_table['Period'].dt.quarter.map(lambda x: f'Q{x}') + ' ' + forecast_table['Period'].dt.year.astype(str)
-#     elif selected_period == 'D':
-#         forecast_table['Period'] = forecast_table['Period'].dt.strftime('%Y-%m-%d')
-#     else:  # 'M'
-#         forecast_table['Period'] = forecast_table['Period'].dt.strftime('%B %Y')
+    # Format the period column based on selected granularity
+    if selected_period == 'Y':
+        forecast_table['Period'] = forecast_table['Period'].dt.strftime('%Y')
+    elif selected_period == 'Q':
+        forecast_table['Period'] = forecast_table['Period'].dt.quarter.map(lambda x: f'Q{x}') + ' ' + forecast_table['Period'].dt.year.astype(str)
+    elif selected_period == 'D':
+        forecast_table['Period'] = forecast_table['Period'].dt.strftime('%Y-%m-%d')
+    else:  # 'M'
+        forecast_table['Period'] = forecast_table['Period'].dt.strftime('%B %Y')
 
-#     # Display the forecast table
-#     st.markdown("### 📊 Forecast Summary Table")
-#     st.markdown("""
-#     This table shows the forecasted values and their confidence intervals for:
-#     - Registered Users
-#     - Conversion Rate
-#     - Repeat Purchase Rate
-#     """)
+    # Display the forecast table
+    st.markdown("### 📊 Forecast Summary Table")
+    st.markdown("""
+    This table shows the forecasted values and their confidence intervals for:
+    - Registered Users
+    - Conversion Rate
+    - Repeat Purchase Rate
+    """)
 
-#     st.dataframe(
-#         forecast_table.set_index('Period').style.format({
-#             'Forecasted Users': '{:,.0f}',
-#             'Users Lower Bound': '{:,.0f}',
-#             'Users Upper Bound': '{:,.0f}',
-#             'Forecasted Conversion Rate (%)': '{:.2f}%',
-#             'Conversion Rate Lower Bound (%)': '{:.2f}%',
-#             'Conversion Rate Upper Bound (%)': '{:.2f}%',
-#             'Forecasted Repeat Rate (%)': '{:.2f}%',
-#             'Repeat Rate Lower Bound (%)': '{:.2f}%',
-#             'Repeat Rate Upper Bound (%)': '{:.2f}%'
-#         }),
-#         use_container_width=True
-#     )
+    st.dataframe(
+        forecast_table.set_index('Period').style.format({
+            'Forecasted Users': '{:,.0f}',
+            'Users Lower Bound': '{:,.0f}',
+            'Users Upper Bound': '{:,.0f}',
+            'Forecasted Conversion Rate (%)': '{:.2f}%',
+            'Conversion Rate Lower Bound (%)': '{:.2f}%',
+            'Conversion Rate Upper Bound (%)': '{:.2f}%',
+            'Forecasted Repeat Rate (%)': '{:.2f}%',
+            'Repeat Rate Lower Bound (%)': '{:.2f}%',
+            'Repeat Rate Upper Bound (%)': '{:.2f}%'
+        }),
+        use_container_width=True
+    )
 
 # Detailed metrics table
 st.subheader("Detailed Metrics")
