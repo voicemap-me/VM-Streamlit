@@ -1324,34 +1324,34 @@ with tab6:
     fig_users_forecast = format_date_axis(fig_users_forecast, selected_period)
     st.plotly_chart(fig_users_forecast, use_container_width=True)
     
-    # Add forecast components visualization
-    st.markdown("### 📊 Forecast Components Analysis")
-    st.markdown("""
-    Understanding what drives our metrics across different time periods:
-    - **Trend**: The overall direction of growth
-    - **Yearly Seasonality**: Annual patterns and cycles
-    - **Monthly Seasonality**: Monthly variations
-    - **Weekly Seasonality**: Weekly patterns
-    - **Daily Seasonality**: Daily fluctuations
-    """)
+    # # Add forecast components visualization
+    # st.markdown("### 📊 Forecast Components Analysis")
+    # st.markdown("""
+    # Understanding what drives our metrics across different time periods:
+    # - **Trend**: The overall direction of growth
+    # - **Yearly Seasonality**: Annual patterns and cycles
+    # - **Monthly Seasonality**: Monthly variations
+    # - **Weekly Seasonality**: Weekly patterns
+    # - **Daily Seasonality**: Daily fluctuations
+    # """)
     
-    col3, col4 = st.columns(2)
+    # col3, col4 = st.columns(2)
     
-    with col3:
-        st.markdown("#### Revenue Components")
-        # Create components forecast for revenue
-        revenue_comp_forecast, revenue_comp_model = create_components_forecast(filtered_df_revenue, 'Total Revenue')
-        fig_revenue_components = plot_components(revenue_comp_model, revenue_comp_forecast)
-        st.pyplot(fig_revenue_components)
-        plt.close()
+    # with col3:
+    #     st.markdown("#### Revenue Components")
+    #     # Create components forecast for revenue
+    #     revenue_comp_forecast, revenue_comp_model = create_components_forecast(filtered_df_revenue, 'Total Revenue')
+    #     fig_revenue_components = plot_components(revenue_comp_model, revenue_comp_forecast)
+    #     st.pyplot(fig_revenue_components)
+    #     plt.close()
     
-    with col4:
-        st.markdown("#### Users Components")
-        # Create components forecast for users
-        users_comp_forecast, users_comp_model = create_components_forecast(filtered_df, 'New Users')
-        fig_users_components = plot_components(users_comp_model, users_comp_forecast)
-        st.pyplot(fig_users_components)
-        plt.close()
+    # with col4:
+    #     st.markdown("#### Users Components")
+    #     # Create components forecast for users
+    #     users_comp_forecast, users_comp_model = create_components_forecast(filtered_df, 'New Users')
+    #     fig_users_components = plot_components(users_comp_model, users_comp_forecast)
+    #     st.pyplot(fig_users_components)
+    #     plt.close()
 
     
     # Create forecasts for additional metrics
