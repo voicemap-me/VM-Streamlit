@@ -49,10 +49,23 @@ pip install -r requirements.txt
 
 2. Run the Streamlit app:
 ```bash
-streamlit run app.py
+streamlit run dashboard.py
 ```
 
 3. Access the dashboard at `http://localhost:8501`
+
+## Update Data
+
+Make sure the column names match exactly.
+
+1. Export Route Purchases from Admin:
+-- Created at [Route Purchase],Price [Route Purchase],Id [Route],Title [Route],Type [Payment],Id [User]
+
+2. Export Users from Admin:
+-- Id,Created at
+
+3. Run the python3 datapipe.py script to append the data and save to csv files.
+
 
 ## Data Format
 
@@ -93,9 +106,9 @@ Id [User],Created at [Route Purchase],Type [Payment]
 ## Contributing
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
+2. Create your feature branch (`git checkout -b samplebranchname`)
+3. Commit your changes (`git commit -m 'sample commit comment'`)
+4. Push to the branch (`git push origin samplebranchname`)
 5. Open a Pull Request
 
 
