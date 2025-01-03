@@ -59,19 +59,23 @@ def create_prophet_forecast(data, column_name, periods=12):
     
     m.fit(df_prophet)
     
-    # Get the last date from actual data
+    # Get the last date from actual data and ensure we start forecasting from the next period
     last_date = df_prophet['ds'].max()
     
     # Create future dataframe starting after the last actual date
     if selected_period == 'D':
-        future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=periods, freq='D')
+        next_start = last_date + pd.Timedelta(days=1)
+        future_dates = pd.date_range(start=next_start, periods=periods, freq='D')
     elif selected_period == 'M':
-        # Use 'ME' for date_range to get month-end dates
-        future_dates = pd.date_range(start=last_date + pd.offsets.MonthEnd(1), periods=periods, freq='ME')
+        # Ensure we start from the next month after the last actual data
+        next_month_start = (last_date + pd.offsets.MonthEnd(0) + pd.Timedelta(days=1))
+        future_dates = pd.date_range(start=next_month_start, periods=periods, freq='ME')
     elif selected_period == 'Q':
-        future_dates = pd.date_range(start=last_date + pd.offsets.QuarterBegin(1), periods=periods, freq='Q')
+        next_quarter_start = (last_date + pd.offsets.QuarterEnd(0) + pd.Timedelta(days=1))
+        future_dates = pd.date_range(start=next_quarter_start, periods=periods, freq='Q')
     else:  # 'Y'
-        future_dates = pd.date_range(start=last_date + pd.offsets.YearBegin(1), periods=periods, freq='Y')
+        next_year_start = pd.Timestamp(last_date.year + 1, 1, 1)
+        future_dates = pd.date_range(start=next_year_start, periods=periods, freq='Y')
     
     future = pd.DataFrame({'ds': future_dates})
     
