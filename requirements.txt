@@ -1,10 +1,9 @@
 streamlit
 pandas
 plotly
-gspread
-oauth2client
 numpy
 python-dateutil
 schedule
 prophet
 matplotlib
+watchdog==3.0.0

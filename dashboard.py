@@ -13,14 +13,10 @@ st.set_page_config(page_title="VM-Streamlit", layout="wide")
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["User Acquisition", "Payment Metrics", "Conversion Analysis", "Revenue Metrics", "Unit Economics", "Forecasting"])
 
-# tab1, tab2, tab3, tab4, tab5 = st.tabs(["User Acquisition", "Payment Metrics", "Conversion Analysis", "Revenue Metrics", "Unit Economics"])
-
-
 # Define all payment types
 ALL_PAYMENT_TYPES = ['InAppPurchase', 'AndroidPayment', 'StripePayment', 'CouponRedemptionCreditReseller', 'FreePayment', 'CouponRedemptionReseller', 'CouponRedemptionResellerReply', 'CouponRedemptionPaid', 'CouponRedemption', 'SwfRedemption', 'BraintreePayment', 'PaypalPayment']
 DEFAULT_PAYMENT_TYPES = ['InAppPurchase', 'AndroidPayment', 'StripePayment']
 
-# Add this in your imports section at the top
 def create_prophet_forecast(data, column_name, periods=12):
     """
     Create a forecast using Facebook Prophet
@@ -70,7 +66,8 @@ def create_prophet_forecast(data, column_name, periods=12):
     if selected_period == 'D':
         future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=periods, freq='D')
     elif selected_period == 'M':
-        future_dates = pd.date_range(start=last_date + pd.offsets.MonthBegin(1), periods=periods, freq='M')
+        # Use 'ME' for date_range to get month-end dates
+        future_dates = pd.date_range(start=last_date + pd.offsets.MonthEnd(1), periods=periods, freq='ME')
     elif selected_period == 'Q':
         future_dates = pd.date_range(start=last_date + pd.offsets.QuarterBegin(1), periods=periods, freq='Q')
     else:  # 'Y'
