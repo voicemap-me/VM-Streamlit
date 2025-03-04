@@ -1,4 +1,7 @@
 #!/bin/bash
+# Running the setup.sh file. Navigate to directory that contains the file. Then run ./setup.sh
+# This will creat a venv, install dependancies.
+# Then run source venv/bin/activate to activate the venv so that you can run the streamlit application.
 
 # Create virtual environment
 python3 -m venv venv
