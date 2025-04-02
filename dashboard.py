@@ -410,8 +410,8 @@ def process_filtered_data(
 
 @st.cache_data
 def load_data():
-    users = pd.read_csv("User Data 4 March 2025.csv")
-    purchases = pd.read_csv("Purchase Data 4 March 2025.csv")
+    users = pd.read_csv("User Data 2 April 2025.csv")
+    purchases = pd.read_csv("Purchase Data 2 April 2025.csv")
     
     # Convert dates with more robust parsing and ensure timezone-naive
     users['Created at'] = pd.to_datetime(users['Created at'], format='mixed', utc=True).dt.tz_localize(None)
@@ -424,7 +424,156 @@ def load_data():
     
     return users, purchases
 
+@st.cache_data
+def build_ltv_data_filtered(users_df, purchases_df):
+    """
+    Calculate LTV (Lifetime Value) data for each user type and month since signup.
+    
+    1) Uses precomputed classifications from compute_user_classifications
+    2) Compute 'months_since_signup' for each PAID purchase
+    3) Calculate each user's cumulative paid spend by month_since_signup
+    4) Average those cumulative spends across all users in each user_type & month_since_signup
+    
+    Returns a DataFrame with columns:
+      [user_type, months_since_signup, avg_ltv]
+    """
+    ###################################################
+    # A) Prepare data - Get user classifications
+    ###################################################
+    # Define paid payment types
+    paid_types = [
+        'AndroidPayment','BraintreePayment','CouponRedemptionCreditReseller',
+        'CouponRedemptionReseller','CouponRedemptionResellerReply',
+        'InAppPurchase','PaypalPayment','StripePayment'
+    ]
+    
+    # Compute user classifications - only done when needed and cached
+    users_with_types = compute_user_classifications(users_df, purchases_df, paid_types)
+    
+    # Filter to just paid purchases
+    paid_purchases = purchases_df[purchases_df['Type [Payment]'].isin(paid_types)].copy()
+    if len(paid_purchases) == 0:
+        return pd.DataFrame() # Return empty DataFrame if no paid purchases
+    
+    ###################################################
+    # B) Calculate cumulative spend by months since signup
+    ###################################################
+    # Join user data (including user_type) to paid purchases
+    merged_paid = pd.merge(
+        paid_purchases,
+        users_with_types[['Id', 'Created at', 'user_type']],
+        left_on='Id [User]',
+        right_on='Id',
+        how='inner'
+    )
+    
+    # Calculate months since signup (vectorized)
+    days_diff = (merged_paid['Created at [Route Purchase]'] - merged_paid['Created at']).dt.days
+    merged_paid['months_since_signup'] = np.floor(days_diff / 30).astype(int)
+    
+    # Discard purchases before signup
+    merged_paid = merged_paid[merged_paid['months_since_signup'] >= 0]
+    
+    # Group by user, user_type, and month to get monthly spend
+    user_monthly = merged_paid.groupby(
+        ['Id [User]', 'user_type', 'months_since_signup']
+    )['Price [Route Purchase]'].sum().reset_index()
+    
+    # Sort and compute cumulative spend
+    user_monthly.sort_values(['Id [User]', 'months_since_signup'], inplace=True)
+    user_monthly['cumulative_spend'] = user_monthly.groupby('Id [User]')['Price [Route Purchase]'].cumsum()
+    
+    # Average by user_type and months_since_signup
+    final = user_monthly.groupby(
+        ['user_type', 'months_since_signup'], as_index=False
+    ).agg(
+        avg_ltv=('cumulative_spend', 'mean')
+    )
+    
+    # Exclude "Returning First" user type
+    final = final[final['user_type'] != "Returning First"].copy()
+    
+    return final
 
+@st.cache_data
+def compute_user_classifications(users_df, purchases_df, paid_payment_types):
+    """
+    Efficiently compute user type classifications for LTV analysis.
+    This is separated from load_data() for performance reasons.
+    Only called when needed for LTV calculations.
+    
+    Returns: A copy of users_df with 'user_type' column added
+    """
+    # Make copies to avoid modifying originals
+    users = users_df.copy()
+    purchases = purchases_df.copy()
+    
+    # Add signup_month to users for quicker filtering
+    users['signup_month'] = users['Created at'].dt.to_period('M')
+    
+    # For each purchase, add the month
+    purchases['purchase_month'] = purchases['Created at [Route Purchase]'].dt.to_period('M')
+    
+    # Mark which purchases are paid
+    purchases['is_paid'] = purchases['Type [Payment]'].isin(paid_payment_types)
+    
+    # Fast filtering: only look at paid purchases first to reduce merge size
+    paid_purchase_data = purchases[purchases['is_paid']][['Id [User]', 'purchase_month']].copy()
+    
+    # Compute first paid purchase month for each user
+    first_paid = paid_purchase_data.groupby('Id [User]')['purchase_month'].min().reset_index()
+    first_paid.rename(columns={'purchase_month': 'first_paid_month'}, inplace=True)
+    
+    # Count total paid purchases per user
+    paid_count = paid_purchase_data.groupby('Id [User]').size().reset_index(name='total_paid_count')
+    
+    # Merge these metrics
+    paid_metrics = pd.merge(first_paid, paid_count, on='Id [User]', how='outer')
+    
+    # Merge with user signup data
+    user_metrics = pd.merge(
+        users[['Id', 'signup_month']], 
+        paid_metrics,
+        left_on='Id', 
+        right_on='Id [User]',
+        how='left'
+    )
+    
+    # Fill NaN values for users with no purchases
+    user_metrics['total_paid_count'] = user_metrics['total_paid_count'].fillna(0)
+    
+    # Calculate if paid in signup month
+    user_metrics['paid_in_signup'] = (user_metrics['first_paid_month'] == user_metrics['signup_month'])
+    user_metrics['paid_in_signup'] = user_metrics['paid_in_signup'].fillna(False)
+    
+    # Vectorized classification with numpy.select
+    conditions = [
+        user_metrics['total_paid_count'] == 0,  # No paid purchases
+        user_metrics['paid_in_signup'],          # Paid in signup month
+        user_metrics['total_paid_count'] == 1,   # Just one paid purchase (not in signup)
+        user_metrics['total_paid_count'] > 1     # Multiple paid purchases
+    ]
+    
+    choices = [
+        "Free User",
+        "New Paying",
+        "Returning First",
+        "Returning Repeat"
+    ]
+    
+    user_metrics['user_type'] = np.select(conditions, choices, default="Free User")
+    
+    # Merge back to users table
+    users = pd.merge(
+        users,
+        user_metrics[['Id', 'user_type']],
+        on='Id',
+        how='left'
+    )
+    
+    users['user_type'] = users['user_type'].fillna("Free User")
+    
+    return users
 
 def get_user_id_range(users, month):
     month_users = users[users['Created at'].dt.to_period('M') == month]
@@ -730,7 +879,7 @@ col1, col2 = st.sidebar.columns(2)
 with col1:
     start_date = st.date_input(
             "Start Date",
-            value=datetime(2020, 3, 1).date(),  # Set default to March 1, 2020
+            value=datetime(2020, 4, 1).date(),  # Set default to April 1, 2020
             min_value=min_date,
             max_value=max_date
     )
@@ -768,6 +917,27 @@ df, df_revenue = process_filtered_data(
 
 filtered_df = df
 filtered_df_revenue = df_revenue
+
+# IMPROVEMENT: Prepare filtered data for LTV tab once here
+# This avoids redundant filtering and improves caching
+# Converting dates to timezone-naive pandas datetime 
+date_start = pd.to_datetime(start_date).tz_localize(None)
+date_end = pd.to_datetime(end_date).tz_localize(None)
+
+# Subset 'users' to the selected date range
+users_filtered = users[
+    (users['Created at'] >= date_start) &
+    (users['Created at'] <= date_end)
+].copy()
+
+# Subset 'purchases' to only selected payment types
+pmt_filtered = purchases[purchases['Type [Payment]'].isin(selected_payment_types)].copy()
+
+# Keep only purchases within the date range
+pmt_filtered = pmt_filtered[
+    (pmt_filtered['Created at [Route Purchase]'] >= date_start) &
+    (pmt_filtered['Created at [Route Purchase]'] <= date_end)
+].copy()
 
 fig_rev_breakdown = px.bar(filtered_df_revenue, x='Created at',
     y=['New Paying Users Revenue', 'Returning First Purchase Revenue', 'Returning Repeat Revenue'],
@@ -1469,27 +1639,27 @@ with tab6:
         line=dict(color='blue', width=2)
     ))
 
-    # Forecast line in RED dash
+    # Forecast line in RED dash - CHANGE HERE: using yhat_lower instead of yhat
     fig_revenue.add_trace(go.Scatter(
         x=revenue_forecast['ds'],
-        y=revenue_forecast['yhat'],
+        y=revenue_forecast['yhat_lower'],  # Changed from yhat to yhat_lower
         mode='lines+markers',
-        name='Forecasted Revenue',
+        name='Conservative Forecast (Lower Bound)',  # Updated name
         line=dict(color='red', dash='dash', width=2)
     ))
 
-    # Confidence interval
+    # Confidence interval (keep this as is for context)
     fig_revenue.add_trace(go.Scatter(
         x=revenue_forecast['ds'].tolist() + revenue_forecast['ds'][::-1].tolist(),
         y=revenue_forecast['yhat_upper'].tolist() + revenue_forecast['yhat_lower'][::-1].tolist(),
         fill='toself',
         fillcolor='rgba(255,0,0,0.1)',
         line=dict(color='rgba(255,0,0,0)'),
-        name='Confidence'
+        name='Confidence Range'  # Slightly updated name
     ))
 
     fig_revenue.update_layout(
-        title='Revenue Forecast (Trained on data from 2020+)',
+        title='Conservative Revenue Forecast (Lower Bound, Trained on data from 2020+)',  # Updated title
         xaxis_title='Date',
         yaxis_title='Revenue ($)',
         hovermode='x unified',
@@ -1510,27 +1680,27 @@ with tab6:
         line=dict(color='green', width=2)
     ))
 
-    # Forecast line in RED dash
+    # Forecast line in RED dash - CHANGE HERE: using yhat_lower instead of yhat
     fig_users.add_trace(go.Scatter(
         x=users_forecast['ds'],
-        y=users_forecast['yhat'],
+        y=users_forecast['yhat_lower'],  # Changed from yhat to yhat_lower
         mode='lines+markers',
-        name='Forecasted Users',
+        name='Conservative Forecast (Lower Bound)',  # Updated name
         line=dict(color='red', dash='dash', width=2)
     ))
 
-    # Confidence interval
+    # Confidence interval (keep this as is for context)
     fig_users.add_trace(go.Scatter(
         x=users_forecast['ds'].tolist() + users_forecast['ds'][::-1].tolist(),
         y=users_forecast['yhat_upper'].tolist() + users_forecast['yhat_lower'][::-1].tolist(),
         fill='toself',
         fillcolor='rgba(255,0,0,0.1)',
         line=dict(color='rgba(255,0,0,0)'),
-        name='Confidence'
+        name='Confidence Range'  # Slightly updated name
     ))
 
     fig_users.update_layout(
-        title='New Users Forecast (Trained on data from 2020+)',
+        title='Conservative New Users Forecast (Lower Bound, Trained on data from 2020+)',  # Updated title
         xaxis_title='Date',
         yaxis_title='Users',
         hovermode='x unified',
@@ -1558,15 +1728,13 @@ with tab6:
     # 8) Combine into a "Forecast Summary Table" for both Revenue & Users
     st.subheader("Forecast Summary Table")
 
-    # Create DataFrame for final output.
-    # We'll align them by 'ds' (the date).
-    # Both forecasts have the same ds range, so we can merge on ds.
+    # Create DataFrame for final output
     df_forecast = pd.DataFrame({
         'ds': revenue_forecast['ds'],
-        'Revenue': revenue_forecast['yhat'].round(2),
+        'Revenue': revenue_forecast['yhat'].round(2),       # Still using yhat
         'Revenue Lower': revenue_forecast['yhat_lower'].round(2),
         'Revenue Upper': revenue_forecast['yhat_upper'].round(2),
-        'New Users': users_forecast['yhat'].round(0),
+        'New Users': users_forecast['yhat'].round(0),       # Still using yhat
         'New Users Lower': users_forecast['yhat_lower'].round(0),
         'New Users Upper': users_forecast['yhat_upper'].round(0)
     })
@@ -1574,9 +1742,10 @@ with tab6:
     # Format 'ds' as e.g. "Jan 2023"
     df_forecast['Date'] = df_forecast['ds'].dt.strftime('%b %Y')
 
-    # Reorder columns: 'Date', 'Revenue', 'Users', ...
-    df_forecast = df_forecast[['Date', 'Revenue', 'Revenue Lower', 'Revenue Upper', 
-                               'New Users', 'New Users Lower', 'New Users Upper']]
+    # Reorder columns: put conservative estimates first since they match the chart lines
+    df_forecast = df_forecast[['Date', 
+                             'Revenue', 'Revenue Lower', 'Revenue Upper', 
+                             'New Users', 'New Users Lower', 'New Users Upper']]
 
     # Use set_index('Date') so Date is the row label
     st.dataframe(
@@ -1609,219 +1778,57 @@ with tab7:
     - **Returning Repeat**: Did not pay in the sign-up month, but eventually made more than 1 paid purchase 
     """)
 
-    @st.cache_data
-    def build_ltv_data_filtered(users_df, purchases_df):
-        """
-        1) Classify each user into: Free, New Paying, Returning First, Returning Repeat
-        2) Compute 'months_since_signup' for each PAID purchase
-        3) Calculate each user's cumulative paid spend by month_since_signup
-        4) Average those cumulative spends across all users in each user_type & month_since_signup
-        5) Exclude 'Returning First Purchase' from final results
-
-        Returns a DataFrame with columns:
-          [user_type, months_since_signup, avg_ltv]
-        """
-        ###################################################
-        # A) PREP & MERGE
-        ###################################################
-        # Copy to avoid modifying original
-        u = users_df.copy()
-        p = purchases_df.copy()
-
-        # Rename columns for clarity
-        u.rename(columns={'Id': 'user_id'}, inplace=True)
-        p.rename(columns={'Id [User]': 'user_id',
-                          'Price [Route Purchase]': 'price'}, 
-                 inplace=True)
-
-        # Define which payment types count as 'paid'
-        paid_types = [
-            'AndroidPayment','BraintreePayment','CouponRedemptionCreditReseller',
-            'CouponRedemptionReseller','CouponRedemptionResellerReply',
-            'InAppPurchase','PaypalPayment','StripePayment'
-        ]
-        p['is_paid'] = p['Type [Payment]'].isin(paid_types)
-
-        # Force datetime
-        u['Created at'] = pd.to_datetime(u['Created at'], utc=True).dt.tz_localize(None)
-        p['Created at [Route Purchase]'] = pd.to_datetime(p['Created at [Route Purchase]'], utc=True).dt.tz_localize(None)
-
-        # Sign-up month (to check if user paid during that month)
-        u['signup_month'] = u['Created at'].dt.to_period('M')
-
-        ###################################################
-        # B) CLASSIFY USERS
-        ###################################################
-        # For each user, count total paid purchases & how many in sign-up month
-        merged = pd.merge(
-            p[['user_id','is_paid','Created at [Route Purchase]']],
-            u[['user_id','signup_month','Created at']], 
-            on='user_id', how='right'
-        )
-        # Some users might have no purchase row -> fill is_paid as False
-        merged['is_paid'] = merged['is_paid'].fillna(False)
-        # Month of each purchase
-        merged['purchase_month'] = merged['Created at [Route Purchase]'].dt.to_period('M')
-
-        def user_summary(sub):
-            paid_count = sub['is_paid'].sum()
-            su_month   = sub['signup_month'].iloc[0]
-            in_signup  = ((sub['is_paid'] == True) & (sub['purchase_month'] == su_month)).sum()
-            return pd.Series({'total_paid_count':paid_count, 'signup_paid_count':in_signup})
-
-        user_type_info = merged.groupby('user_id').apply(user_summary).reset_index()
-
-        # Classify each user
-        def classify_user(row):
-            if row['total_paid_count'] == 0:
-                return "Free User"
-            elif row['signup_paid_count'] > 0:
-                return "New Paying"
-            elif row['total_paid_count'] == 1:
-                return "Returning First"   # We'll omit from final chart
-            else:
-                return "Returning Repeat"
-
-        user_type_info['user_type'] = user_type_info.apply(classify_user, axis=1)
-
-        # Merge classification back into 'users'
-        u = pd.merge(
-            u, 
-            user_type_info[['user_id','user_type']], 
-            on='user_id', how='left'
-        )
-        u['user_type'] = u['user_type'].fillna("Free User")
-
-        ###################################################
-        # C) BUILD CUMULATIVE PAID REVENUE
-        ###################################################
-        # Only keep paid purchases
-        paid_purchases = p[p['is_paid'] == True].copy()
-
-        # Merge with user sign-up date + user_type
-        merged_paid = pd.merge(
-            paid_purchases, 
-            u[['user_id','Created at','user_type']], 
-            on='user_id', how='inner'
-        )
-
-        # months_since_signup
-        merged_paid['months_since_signup'] = (
-            (merged_paid['Created at [Route Purchase]'] - merged_paid['Created at'])
-            / np.timedelta64(30,'D')
-        ).apply(np.floor).astype(int)
-
-        # Discard negative
-        merged_paid = merged_paid[merged_paid['months_since_signup'] >= 0]
-
-        # group by (user_id, user_type, months_since_signup), sum price
-        user_monthly = merged_paid.groupby(
-            ['user_id','user_type','months_since_signup'], as_index=False
-        )['price'].sum()
-
-        # cumsum across each user
-        user_monthly.sort_values(['user_id','months_since_signup'], inplace=True)
-        user_monthly['cumulative_spend'] = user_monthly.groupby('user_id')['price'].cumsum()
-
-        # Average by (user_type, months_since_signup)
-        final = user_monthly.groupby(['user_type','months_since_signup'], as_index=False)['cumulative_spend'].mean()
-        final.rename(columns={'cumulative_spend':'avg_ltv'}, inplace=True)
-
-        # Omit the "Returning First" user_type from final
-        final = final[final['user_type'] != "Returning First"].copy()
-
-        return final
-
-    ###################################################
-    # 1) Build LTV data from the *filtered* dataset
-    ###################################################
-    # We'll use the same row-level filtering logic your code uses:
-    #  - 'filtered_df' is aggregated. We need the raw row-level user/purchase data
-    #  - But we want to apply the same "time range + payment type" filters.
-    # So let's re-run the row-level filtering with 'process_filtered_data', then do LTV.
-
-    # We'll replicate the raw filtering: 
-    # 'process_filtered_data' already gave us aggregated DF (filtered_df), 
-    # but let's get the actual row-level (we do NOT have that in 'filtered_df').
-    # We'll do it ourselves by using load_data() + the same filtering approach:
-    # 
-    # Actually, an easy approach: we *already* have 'users' and 'purchases' fully loaded,
-    # but we want to restrict to the same date range & payment types:
-    # 
-    # We'll do exactly what 'process_filtered_data' does, but keep row-level.
-
-    # Filter date range + payment types in the same way:
-    date_start = pd.to_datetime(start_date).tz_localize(None)
-    date_end   = pd.to_datetime(end_date).tz_localize(None)
-
-    # 2) Subset 'users' to that date range
-    users_filtered = users[
-        (users['Created at'] >= date_start) &
-        (users['Created at'] <= date_end)
-    ].copy()
-
-    # 3) Subset 'purchases' to only chosen payment types
-    pmt_filtered = purchases[purchases['Type [Payment]'].isin(selected_payment_types)].copy()
-
-    # 4) We'll keep only purchases that happened between date_start & date_end
-    pmt_filtered = pmt_filtered[
-        (pmt_filtered['Created at [Route Purchase]'] >= date_start) &
-        (pmt_filtered['Created at [Route Purchase]'] <= date_end)
-    ].copy()
-
-    # Now we have row-level 'users_filtered' and 'purchases_filtered' that match the side filters
     ltv_data = build_ltv_data_filtered(users_filtered, pmt_filtered)
 
     ###################################################
-    # 2) Plot the result
+    # Visualization
     ###################################################
-    # We'll have lines for: ["Free User","New Paying","Returning Repeat"]
-    # because we omitted "Returning First" from the final DataFrame
     fig_ltv = go.Figure()
-    for user_type in ["Free User","New Paying","Returning Repeat"]:
-        subset = ltv_data[ltv_data['user_type'] == user_type].copy()
-        subset.sort_values('months_since_signup', inplace=True)
-        if len(subset) == 0:
-            continue
-        fig_ltv.add_trace(go.Scatter(
-            x=subset['months_since_signup'],
-            y=subset['avg_ltv'],
-            mode='lines+markers',
-            name=user_type,
-            marker=dict(size=6),
-            line=dict(width=2)
-        ))
+    for user_type in ["Free User", "New Paying", "Returning Repeat"]:
+            subset = ltv_data[ltv_data['user_type'] == user_type].copy()
+            subset.sort_values('months_since_signup', inplace=True)
+            if len(subset) == 0:
+                continue
+                
+            fig_ltv.add_trace(go.Scatter(
+                x=subset['months_since_signup'],
+                y=subset['avg_ltv'],
+                mode='lines+markers',
+                name=user_type,
+                marker=dict(size=6),
+                line=dict(width=2)
+            ))
 
     fig_ltv.update_layout(
-        title="Average LTV by Months Since Sign Up (Filtered)",
-        xaxis_title="Months Since Sign-Up",
-        yaxis_title="Avg LTV ($)",
-        hovermode='x unified',
-        height=550,
-        legend=dict(
-            yanchor="top", y=0.99,
-            xanchor="left", x=0.01,
-            bordercolor="grey", borderwidth=1
+            title="Average LTV by Months Since Sign Up (Filtered)",
+            xaxis_title="Months Since Sign-Up",
+            yaxis_title="Avg LTV ($)",
+            hovermode='x unified',
+            height=550,
+            legend=dict(
+                yanchor="top", y=0.99,
+                xanchor="left", x=0.01,
+                bordercolor="grey", borderwidth=1
+            )
         )
-    )
     st.plotly_chart(fig_ltv, use_container_width=True)
 
-    ###################################################
-    # 3) Table preview
-    ###################################################
+        ###################################################
+        # Table preview
+        ###################################################
     st.markdown("### LTV Table (Filtered)")
 
-    # Pivot so each row is months_since_signup, columns are user_type
+        # Pivot so each row is months_since_signup, columns are user_type
     pivoted = ltv_data.pivot(
-        index='months_since_signup',
-        columns='user_type',
-        values='avg_ltv'
-    ).fillna(0.0).round(2)
+            index='months_since_signup',
+            columns='user_type',
+            values='avg_ltv'
+        ).fillna(0.0).round(2)
 
     st.dataframe(
-        pivoted.style.format("${:,.2f}"),
-        use_container_width=True
-    )
+            pivoted.style.format("${:,.2f}"),
+            use_container_width=True
+        )
 
 
 # Detailed metrics table
@@ -1889,3 +1896,6 @@ st.dataframe(
         'ARPPU': '${:,.2f}'
     }),
     use_container_width=True)
+
+
+
