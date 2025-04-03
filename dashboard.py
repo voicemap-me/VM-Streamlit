@@ -1644,7 +1644,7 @@ with tab6:
         x=revenue_forecast['ds'],
         y=revenue_forecast['yhat_lower'],  # Changed from yhat to yhat_lower
         mode='lines+markers',
-        name='Conservative Forecast (Lower Bound)',  # Updated name
+        name='Lower Bound Revenue Forecast',  # Updated name
         line=dict(color='red', dash='dash', width=2)
     ))
 
@@ -1655,11 +1655,11 @@ with tab6:
         fill='toself',
         fillcolor='rgba(255,0,0,0.1)',
         line=dict(color='rgba(255,0,0,0)'),
-        name='Confidence Range'  # Slightly updated name
+        name='Confidence'  # Slightly updated name
     ))
 
     fig_revenue.update_layout(
-        title='Conservative Revenue Forecast (Lower Bound, Trained on data from 2020+)',  # Updated title
+        title='Lower Bound Revenue Forecast, Trained on data from 2020+)',  # Updated title
         xaxis_title='Date',
         yaxis_title='Revenue ($)',
         hovermode='x unified',
@@ -1685,7 +1685,7 @@ with tab6:
         x=users_forecast['ds'],
         y=users_forecast['yhat_lower'],  # Changed from yhat to yhat_lower
         mode='lines+markers',
-        name='Conservative Forecast (Lower Bound)',  # Updated name
+        name='Lower Bound Revenue Forecast',  # Updated name
         line=dict(color='red', dash='dash', width=2)
     ))
 
@@ -1696,11 +1696,11 @@ with tab6:
         fill='toself',
         fillcolor='rgba(255,0,0,0.1)',
         line=dict(color='rgba(255,0,0,0)'),
-        name='Confidence Range'  # Slightly updated name
+        name='Confidence'  # Slightly updated name
     ))
 
     fig_users.update_layout(
-        title='Conservative New Users Forecast (Lower Bound, Trained on data from 2020+)',  # Updated title
+        title='Lower Bound New Users Forecast, Trained on data from 2020+)',  # Updated title
         xaxis_title='Date',
         yaxis_title='Users',
         hovermode='x unified',
