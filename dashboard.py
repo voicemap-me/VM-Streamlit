@@ -410,8 +410,8 @@ def process_filtered_data(
 
 @st.cache_data
 def load_data():
-    users = pd.read_csv("User Data 8 August 2025.csv")
-    purchases = pd.read_csv("Purchase Data 8 August 2025.csv")
+    users = pd.read_csv("User Data 1 October 2025.csv")
+    purchases = pd.read_csv("Purchase Data 1 October 2025.csv")
     
     # Convert dates with more robust parsing and ensure timezone-naive
     users['Created at'] = pd.to_datetime(users['Created at'], format='mixed', utc=True).dt.tz_localize(None)
@@ -879,7 +879,7 @@ col1, col2 = st.sidebar.columns(2)
 with col1:
     start_date = st.date_input(
             "Start Date",
-            value=datetime(2020, 9, 1).date(),  # Set default to April 1, 2020
+            value=datetime(2020, 11, 1).date(),  # Set default to April 1, 2020
             min_value=min_date,
             max_value=max_date
     )

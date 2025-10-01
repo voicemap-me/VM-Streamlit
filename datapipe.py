@@ -2,12 +2,12 @@ import pandas as pd
 
 # Read CSV files
 print("Reading big data")
-big_purchase = pd.read_csv('Purchase Data 12 May 2025.csv')
-big_user = pd.read_csv('User Data 12 May 2025.csv')
+big_purchase = pd.read_csv('Purchase Data 8 August 2025.csv')
+big_user = pd.read_csv('User Data 8 August 2025.csv')
 
 print("Reading new months data")
-small_purchase = pd.read_csv('route_purchase_may_july25.csv')
-small_user = pd.read_csv('user_may_july25.csv')
+small_purchase = pd.read_csv('route_purchase_31july-30sept2025.csv')
+small_user = pd.read_csv('user_31july-30sept2025.csv')
 
 # Get common columns between purchase DataFrames
 common_columns = list(set(big_purchase.columns) & set(small_purchase.columns))
@@ -35,5 +35,5 @@ bigger_user = pd.concat([
 
 print("Saving new merged Purchase and User data...")
 # Save CSV files without index column
-bigger_purchase.to_csv('Purchase Data 8 August 2025.csv', index=False)
-bigger_user.to_csv('User Data 8 August 2025.csv', index=False)
+bigger_purchase.to_csv('Purchase Data 1 October 2025.csv', index=False)
+bigger_user.to_csv('User Data 1 October 2025.csv', index=False)
